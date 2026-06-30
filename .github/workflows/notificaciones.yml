@@ -2,8 +2,16 @@ name: World Cup Telegram Bot
 
 on:
   schedule:
-    # Ejecuta cada minuto (GitHub puede introducir retrasos)
-    - cron: "* * * * *"
+    # 11:00 - 12:45 CST -> 17:00 - 18:45 UTC
+    - cron: "0-59 17 * * *"
+    - cron: "0-45 18 * * *"
+    # 15:00 - 16:45 CST -> 21:00 - 22:45 UTC
+    - cron: "0-59 21 * * *"
+    - cron: "0-45 22 * * *"
+    # 19:00 - 21:00 CST -> 01:00 - 03:00 UTC (Día siguiente)
+    - cron: "0-59 1 * * *"
+    - cron: "0-59 2 * * *"
+    - cron: "0 3 * * *"
 
   workflow_dispatch:
 
@@ -36,7 +44,6 @@ jobs:
 
       - name: Ejecutar Bot
         env:
-          FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python bot.py
@@ -45,9 +52,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
           git add state.json
-
           git diff --cached --quiet || git commit -m "Actualizar estado del bot"
-
           git push
