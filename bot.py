@@ -6,383 +6,118 @@ from datetime import datetime
 # ==========================================
 # CONFIGURACIÓN
 # ==========================================
-
-API_KEY = os.environ["FOOTBALL_API_KEY"]
 BOT_TOKEN = os.environ["TELEGRAM_TOKEN"]
 CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-BASE_URL = "https://v3.football.api-sports.io"
-
+# Headers necesarios para que ESPN no bloquee la petición
 HEADERS = {
-    "x-apisports-key": API_KEY
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
 }
 
 STATE_FILE = "state.json"
-
-WORLD_CUP_LEAGUE_ID = 1   # Cambiar si la API devuelve otro ID para el Mundial
-
+# Endpoint de ESPN para el Mundial (puede variar según el torneo, este es el standard)
+ESPN_SCOREBOARD_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.worldcup/scoreboard"
+ESPN_SUMMARY_URL = "https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.worldcup/summary"
 
 # ==========================================
 # ESTADO
 # ==========================================
 
 def load_state():
-
     if os.path.exists(STATE_FILE):
-
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-
             return json.load(f)
-
-    return {
-        "fixtures": {},
-        "events": {}
-    }
-
+    return {"fixtures": {}, "events": {}}
 
 def save_state(state):
-
     with open(STATE_FILE, "w", encoding="utf-8") as f:
-
-        json.dump(
-            state,
-            f,
-            ensure_ascii=False,
-            indent=4
-        )
-
+        json.dump(state, f, ensure_ascii=False, indent=4)
 
 # ==========================================
 # TELEGRAM
 # ==========================================
 
 def telegram(message):
-
-    url = (
-        f"https://api.telegram.org/"
-        f"bot{BOT_TOKEN}/sendMessage"
-    )
-
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-
-    r = requests.post(
-        url,
-        json=payload,
-        timeout=30
-    )
-
-    return r.status_code == 200
-
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message, "parse_mode": "HTML"}
+    try:
+        r = requests.post(url, json=payload, timeout=30)
+        return r.status_code == 200
+    except:
+        return False
 
 # ==========================================
-# API FOOTBALL
+# ESPN SCRAPING
 # ==========================================
 
-def api(endpoint, params=None):
-
-    url = BASE_URL + endpoint
-
-    r = requests.get(
-        url,
-        headers=HEADERS,
-        params=params,
-        timeout=30
-    )
-
+def get_matches():
+    """Obtiene los partidos del día desde el scoreboard de ESPN"""
+    r = requests.get(ESPN_SCOREBOARD_URL, headers=HEADERS, timeout=30)
     r.raise_for_status()
+    return r.json().get("events", [])
 
-    return r.json()
-
-
-# ==========================================
-# PARTIDOS DEL MUNDIAL
-# ==========================================
-
-def fixtures_today():
-
-    today = datetime.utcnow().strftime("%Y-%m-%d")
-
-    data = api(
-
-        "/fixtures",
-
-        {
-
-            "league": WORLD_CUP_LEAGUE_ID,
-
-            "season": 2026,
-
-            "date": today
-
-        }
-
-    )
-
-    return data.get("response", [])
-
+def get_match_events(event_id):
+    """Obtiene los eventos (goles, tarjetas) de un partido específico"""
+    params = {"event": event_id}
+    r = requests.get(ESPN_SUMMARY_URL, headers=HEADERS, params=params, timeout=30)
+    r.raise_for_status()
+    # Los eventos suelen estar en 'livePlays' o 'scoringPlays'
+    return r.json().get("livePlays", [])
 
 # ==========================================
-# EVENTOS
-# ==========================================
-
-def fixture_events(fixture_id):
-
-    data = api(
-
-        "/fixtures/events",
-
-        {
-
-            "fixture": fixture_id
-
-        }
-
-    )
-
-    return data.get("response", [])
-    # ==========================================
-# MENSAJES
-# ==========================================
-
-def status_text(short):
-
-    mapping = {
-
-        "NS": "⏳ No iniciado",
-
-        "1H": "🟢 Comenzó el partido",
-
-        "HT": "⏸️ Medio tiempo",
-
-        "2H": "▶️ Comenzó el segundo tiempo",
-
-        "ET": "⏱️ Tiempo extra",
-
-        "BT": "⏸️ Descanso tiempo extra",
-
-        "P": "🏆 Penales",
-
-        "FT": "🏁 Final del partido",
-
-        "AET": "🏁 Final tiempo extra",
-
-        "PEN": "🏆 Final por penales",
-
-        "INT": "Interrumpido",
-
-        "SUSP": "Suspendido",
-
-        "PST": "Pospuesto",
-
-        "CANC": "Cancelado"
-
-    }
-
-    return mapping.get(short, short)
-
-
-# ==========================================
-# ESTADO DEL PARTIDO
-# ==========================================
-
-def check_fixture_status(fixture, state):
-
-    fixture_id = str(fixture["fixture"]["id"])
-
-    status = fixture["fixture"]["status"]["short"]
-
-    elapsed = fixture["fixture"]["status"].get("elapsed")
-
-    home = fixture["teams"]["home"]["name"]
-
-    away = fixture["teams"]["away"]["name"]
-
-    goals_home = fixture["goals"]["home"]
-
-    goals_away = fixture["goals"]["away"]
-
-    old = state["fixtures"].get(fixture_id)
-
-    if old != status:
-
-        message = (
-            f"<b>{home}</b> vs <b>{away}</b>\n\n"
-            f"{status_text(status)}\n\n"
-            f"⚽ {goals_home}-{goals_away}"
-        )
-
-        if elapsed:
-
-            message += f"\n⏱️ {elapsed}'"
-
-        telegram(message)
-
-        state["fixtures"][fixture_id] = status
-
-    return fixture_id
-
-
-# ==========================================
-# EVENTOS
-# ==========================================
-
-def process_events(fixture_id, fixture, events, state):
-
-    home = fixture["teams"]["home"]["name"]
-
-    away = fixture["teams"]["away"]["name"]
-
-    if fixture_id not in state["events"]:
-
-        state["events"][fixture_id] = []
-
-    known = state["events"][fixture_id]
-
-    for event in events:
-
-        minute = event["time"]["elapsed"]
-
-        team = event["team"]["name"]
-
-        player = event["player"]["name"]
-
-        event_id = str(event.get("id", ""))
-
-        if event_id in known:
-
-            continue
-
-        e_type = event["type"]
-
-        detail = event["detail"]
-
-        emoji = "ℹ️"
-
-        text = detail
-
-        if e_type == "Goal":
-
-            emoji = "⚽"
-
-            text = "GOOOOOOL"
-
-        elif e_type == "Card":
-
-            if "Red" in detail:
-
-                emoji = "🟥"
-
-            elif "Yellow" in detail:
-
-                emoji = "🟨"
-
-        elif e_type == "subst":
-
-            emoji = "🔄"
-
-        elif e_type == "Var":
-
-            emoji = "📺"
-
-        elif e_type == "Penalty":
-
-            emoji = "🏆"
-
-        message = (
-            f"{emoji} <b>{home}</b> vs <b>{away}</b>\n\n"
-            f"Equipo: <b>{team}</b>\n"
-            f"Jugador: <b>{player}</b>\n"
-            f"Evento: {text}\n"
-            f"Minuto: {minute}'"
-        )
-
-        telegram(message)
-
-        known.append(event_id)
-        # ==========================================
-# PROCESAR TODOS LOS PARTIDOS
+# LÓGICA DE PROCESAMIENTO
 # ==========================================
 
 def process_matches():
-
     state = load_state()
+    matches = get_matches()
 
-    fixtures = fixtures_today()
-
-    if len(fixtures) == 0:
-        print("No hay partidos para hoy.")
+    if not matches:
+        print("No hay partidos programados.")
         return
 
-    print(f"Partidos encontrados: {len(fixtures)}")
+    for match in matches:
+        fixture_id = match["id"]
+        status_code = match["status"]["type"]["state"] # "pre", "in", "post"
+        
+        # Mapeo de datos básicos
+        home = match["competitions"][0]["competitors"][0]["team"]["displayName"]
+        away = match["competitions"][0]["competitors"][0]["team"]["displayName"]
+        # Nota: ESPN a veces invierte el orden, verificar índices de 'competitors'
+        home = match["competitions"][0]["competitors"][0]["team"]["name"]
+        away = match["competitions"][0]["competitors"][1]["team"]["name"]
+        goals_home = match["competitions"][0]["competitors"][0]["score"]
+        goals_away = match["competitions"][0]["competitors"][1]["score"]
 
-    for fixture in fixtures:
+        # 1. Procesar Estado
+        old_status = state["fixtures"].get(fixture_id)
+        if old_status != status_code:
+            msg = f"<b>{home}</b> vs <b>{away}</b>\nEstado: {match['status']['type']['description']}\n⚽ {goals_home}-{goals_away}"
+            telegram(msg)
+            state["fixtures"][fixture_id] = status_code
 
-        try:
-
-            fixture_id = check_fixture_status(
-                fixture,
-                state
-            )
-
-            events = fixture_events(fixture_id)
-
-            process_events(
-                fixture_id,
-                fixture,
-                events,
-                state
-            )
-
-        except Exception as e:
-
-            print(
-                f"Error procesando fixture {fixture_id}: {e}"
-            )
+        # 2. Procesar Eventos (solo si el partido está en juego)
+        if status_code == "in":
+            events = get_match_events(fixture_id)
+            if fixture_id not in state["events"]:
+                state["events"][fixture_id] = []
+            
+            for event in events:
+                event_id = event["id"]
+                if event_id not in state["events"][fixture_id]:
+                    # Lógica simplificada de eventos
+                    text = f"{event.get('clock', {}).get('displayValue', '')}' - {event.get('text', 'Evento')}"
+                    telegram(f"📢 <b>{home} vs {away}</b>\n{text}")
+                    state["events"][fixture_id].append(event_id)
 
     save_state(state)
-
 
 # ==========================================
 # MAIN
 # ==========================================
 
-def main():
-
-    print("=" * 50)
-    print("WORLD CUP TELEGRAM BOT")
-    print("=" * 50)
-
-    try:
-
-        process_matches()
-
-    except requests.exceptions.HTTPError as e:
-
-        print("HTTP ERROR")
-        print(e)
-
-    except requests.exceptions.ConnectionError:
-
-        print("Sin conexión.")
-
-    except requests.exceptions.Timeout:
-
-        print("Tiempo agotado.")
-
-    except Exception as e:
-
-        print("ERROR GENERAL")
-        print(e)
-
-
-# ==========================================
-# EJECUCIÓN
-# ==========================================
-
 if __name__ == "__main__":
-
-    main()
+    try:
+        process_matches()
+    except Exception as e:
+        print(f"Error crítico: {e}")
