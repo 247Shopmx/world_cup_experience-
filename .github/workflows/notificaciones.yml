@@ -1,41 +1,53 @@
-name: Mundial Telegram
+name: World Cup Telegram Bot
 
 on:
-
   schedule:
-
+    # Ejecuta cada minuto (GitHub puede introducir retrasos)
     - cron: "* * * * *"
 
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
-
   monitor:
-
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-
+      - name: Configurar Python
+        uses: actions/setup-python@v5
         with:
-
           python-version: "3.12"
 
-      - run: |
-
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Crear state.json si no existe
+        run: |
+          if [ ! -f state.json ]; then
+            echo '{"fixtures":{},"events":{}}' > state.json
+          fi
+
       - name: Ejecutar Bot
-
         env:
-
+          FOOTBALL_API_KEY: ${{ secrets.FOOTBALL_API_KEY }}
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-          SPORTS_API_URL: ${{ secrets.SPORTS_API_URL }}
-
         run: python bot.py
+
+      - name: Guardar state.json
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add state.json
+
+          git diff --cached --quiet || git commit -m "Actualizar estado del bot"
+
+          git push
